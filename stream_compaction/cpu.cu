@@ -20,6 +20,11 @@ namespace StreamCompaction {
         void scan(int n, int *odata, const int *idata) {
             timer().startCpuTimer();
             // TODO
+            int running = 0;
+            for (int i = 0; i < n; ++i) {
+                odata[i] = running;
+                running += idata[i];
+            }
             timer().endCpuTimer();
         }
 
@@ -31,8 +36,14 @@ namespace StreamCompaction {
         int compactWithoutScan(int n, int *odata, const int *idata) {
             timer().startCpuTimer();
             // TODO
+            int count = 0;
+            for (int i = 0; i < n; ++i) {
+                if (idata[i] != 0) {
+                    odata[count++] = idata[i];
+                }
+            }
             timer().endCpuTimer();
-            return -1;
+            return count;
         }
 
         /**
@@ -41,10 +52,38 @@ namespace StreamCompaction {
          * @returns the number of elements remaining after compaction.
          */
         int compactWithScan(int n, int *odata, const int *idata) {
+            if (n <= 0) {
+                return 0;
+            }
             timer().startCpuTimer();
             // TODO
+             //Step 1:  Compute temporary array containing
+            int* mask = new int[n];
+            for (int i = 0; i < n; ++i) {
+                mask[i] = (idata[i] != 0) ? 1 : 0;
+            }
+
+            //Step 2:  Run exclusive scan on temporary array
+            int* indices = new int[n];
+            int running = 0;
+            for (int i = 0; i < n; ++i) {
+                indices[i] = running;
+                running += mask[i];
+            }
+
+            //Step 3: Scatter
+            for (int i = 0; i < n; ++i) {
+                if (mask[i]) {
+                    odata[indices[i]] = idata[i];
+                }
+            }
+
+            int res = indices[n - 1] + mask[n - 1];
+            delete[] mask;
+            delete[] indices;
+
             timer().endCpuTimer();
-            return -1;
+            return res;
         }
     }
 }
