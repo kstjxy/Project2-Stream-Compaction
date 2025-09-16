@@ -14,49 +14,52 @@ namespace StreamCompaction {
         }
 
 
-        __global__ void kernUpSweep(int nPow2, int d, int* data) {
-            int i = blockIdx.x * blockDim.x + threadIdx.x;
-            int stride = 1 << (d + 1);
-            int bi = i * stride + (stride - 1);
-            if (bi >= nPow2) return;
-            int ai = bi - (1 << d);
+        __global__ void kernUpSweep(int nPow2, int d, int numOps, int* data) {
+            unsigned int k = blockIdx.x * blockDim.x + threadIdx.x;
+            if (k >= (unsigned int)numOps) return;
+            unsigned int stride = 1u << (d + 1);
+            unsigned int bi = k * stride + (stride - 1u);
+            unsigned int ai = bi - (1u << d);
             data[bi] += data[ai];
         }
 
-        __global__ void kernDownSweep(int nPow2, int d, int* data) {
-            int i = blockIdx.x * blockDim.x + threadIdx.x;
-            int stride = 1 << (d + 1);
-            int bi = i * stride + (stride - 1);
-            if (bi >= nPow2) return;
-            int ai = bi - (1 << d);
+        __global__ void kernDownSweep(int nPow2, int d, int numOps, int* data) {
+            unsigned int k = blockIdx.x * blockDim.x + threadIdx.x;
+            if (k >= (unsigned int)numOps) return;
+            unsigned int stride = 1u << (d + 1);
+            unsigned int bi = k * stride + (stride - 1u);
+            unsigned int ai = bi - (1u << d);
             int t = data[ai];
             data[ai] = data[bi];
             data[bi] += t;
         }
 
-        static void blellochScanInPlace(int* devData, int nPow2) {
+        static void scanInPlace(int* devData, int nPow2) {
             if (nPow2 <= 0) return;
             const int BLOCK_SIZE = 128;
-            int levels = ilog2ceil(nPow2);
+            const int levels = ilog2ceil(nPow2);
 
             // up-sweep
             for (int d = 0; d < levels; ++d) {
                 int numOps = nPow2 >> (d + 1);
                 dim3 block(BLOCK_SIZE);
                 dim3 grid((numOps + BLOCK_SIZE - 1) / BLOCK_SIZE);
-                kernUpSweep <<<grid, block >>> (nPow2, d, devData);
+                kernUpSweep <<<grid, block >>> (nPow2, d, numOps, devData);
+                cudaDeviceSynchronize();
                 checkCUDAError("Radix kernUpSweep");
             }
 
+            // make exclusive
             cudaMemset(devData + (nPow2 - 1), 0, sizeof(int));
-            checkCUDAError("Radix root memset");
+            checkCUDAError("Radix set root");
 
             // down-sweep
             for (int d = levels - 1; d >= 0; --d) {
                 int numOps = nPow2 >> (d + 1);
-                dim3 block(128);
-                dim3 grid((numOps + 127) / 128);
-                kernDownSweep <<<grid, block >>> (nPow2, d, devData);
+                dim3 block(BLOCK_SIZE);
+                dim3 grid((numOps + BLOCK_SIZE - 1) / BLOCK_SIZE);
+                kernDownSweep <<<grid, block >>> (nPow2, d, numOps, devData);
+                cudaDeviceSynchronize();
                 checkCUDAError("Radix kernDownSweep");
             }
         }
@@ -110,10 +113,12 @@ namespace StreamCompaction {
 
             for (int bit = 0; bit < 32; ++bit) {
                 kernBitFlags <<<grid, block >>> (n, bit, devB, devE, devIn);
+                cudaDeviceSynchronize();
+                checkCUDAError("kernBitFlags");
 
                 cudaMemset(devF, 0, nPow2 * sizeof(int));
                 cudaMemcpy(devF, devE, n * sizeof(int), cudaMemcpyDeviceToDevice);
-                blellochScanInPlace(devF, nPow2);
+                scanInPlace(devF, nPow2);
 
                 int h_lastE = 0, h_lastF = 0;
                 cudaMemcpy(&h_lastE, devE + (n - 1), sizeof(int), cudaMemcpyDeviceToHost);
@@ -121,6 +126,8 @@ namespace StreamCompaction {
                 int totalFalses = h_lastE + h_lastF;
 
                 kernScatterByBit <<<grid, block >>> (n, totalFalses, devIn, devB, devF, devOut);
+                cudaDeviceSynchronize();
+                checkCUDAError("kernScatterByBit");
 
                 std::swap(devIn, devOut);
             }
