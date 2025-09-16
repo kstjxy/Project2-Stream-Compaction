@@ -38,19 +38,17 @@ namespace StreamCompaction {
             if (nPow2 <= 0) return;
 
             const int BLOCK_SIZE = 128;
-            int levels = ilog2ceil(nPow2);  // = log2(nPow2) since nPow2 is power-of-two
+            int levels = ilog2ceil(nPow2);
 
             // Up-sweep
             for (int d = 0; d < levels; ++d) {
                 int numOps = nPow2 >> (d + 1);
                 dim3 block(BLOCK_SIZE);
                 dim3 grid((numOps + BLOCK_SIZE - 1) / BLOCK_SIZE);
-                kernUpSweep << <grid, block >> > (nPow2, d, devData);
+                kernUpSweep <<<grid, block >>> (nPow2, d, devData);
                 checkCUDAError("kernUpSweep");
             }
 
-            // Set root to 0 (exclusive) WITHOUT another kernel
-            // (only two helper kernels are allowed)
             cudaMemset(devData + (nPow2 - 1), 0, sizeof(int));
             checkCUDAError("cudaMemset root");
 
